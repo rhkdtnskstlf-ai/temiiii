@@ -109,24 +109,26 @@ with st.sidebar:
         st.rerun()
 
 # =========================
-# 📈 데이터 처리 (복구 포인트!)
+# 📈 데이터 처리 (코스피 복구 핵심!)
 # =========================
 @st.cache_data(ttl=60, show_spinner=False)
 def get_intraday_data(symbol):
     try:
         ticker = yf.Ticker(symbol)
-        df = ticker.history(period="1d", interval="1m") # '1d'로 변경하여 데이터 유실 방지
-        if df.empty:
-            df = ticker.history(period="2d", interval="1m") # 1일치 없으면 2일치 시도
+        # 안정성을 위해 5일치 분봉 데이터를 가져옵니다.
+        df = ticker.history(period="5d", interval="1m")
         if df.empty: return None
         
-        # 마지막 날짜 데이터만 추출
+        # 가장 최근 거래일의 데이터만 추출
         last_date = df.index[-1].date()
-        df = df[df.index.date == last_date]
+        day_df = df[df.index.date == last_date].copy()
         
-        open_p, curr_p = df['Close'].iloc[0], df['Close'].iloc[-1]
-        df['pct'] = ((df['Close'] - open_p) / open_p) * 100
-        return {"df": df, "price": curr_p, "pct": ((curr_p - open_p) / open_p) * 100}
+        if day_df.empty: return None
+        
+        open_p = day_df['Close'].iloc[0]
+        curr_p = day_df['Close'].iloc[-1]
+        day_df['pct'] = ((day_df['Close'] - open_p) / open_p) * 100
+        return {"df": day_df, "price": curr_p, "pct": ((curr_p - open_p) / open_p) * 100}
     except: return None
 
 def draw_index_card(title, data):
@@ -188,12 +190,20 @@ with c1:
     v_kor = st.columns(len(sel_kor))
     for i, name in enumerate(sel_kor):
         with v_kor[i]: draw_index_card(name, k_data[name])
+    
     fig_k = go.Figure()
+    has_any_k = False
     for name in sel_kor:
         d = k_data[name]
-        if d: fig_k.add_trace(go.Scattergl(x=d['df'].index, y=d['df']['pct'], mode='lines', name=name))
-    fig_k.update_layout(height=280, margin=dict(l=0,r=0,t=0,b=0), plot_bgcolor='white')
-    st.plotly_chart(fig_k, use_container_width=True, config={'displayModeBar': False})
+        if d is not None and not d['df'].empty:
+            fig_k.add_trace(go.Scattergl(x=d['df'].index, y=d['df']['pct'], mode='lines', name=name))
+            has_any_k = True
+    
+    fig_k.update_layout(height=280, margin=dict(l=0,r=0,t=0,b=0), plot_bgcolor='white', hovermode='x unified')
+    if has_any_k:
+        st.plotly_chart(fig_k, use_container_width=True, config={'displayModeBar': False})
+    else:
+        st.warning("⚠️ 한국 시장 그래프 데이터를 불러오는 중입니다 (장 마감/점검 등)")
 
 with c2:
     st.subheader("🇺🇸 미국 시장")
@@ -201,12 +211,20 @@ with c2:
     v_usa = st.columns(len(sel_usa))
     for i, name in enumerate(sel_usa):
         with v_usa[i]: draw_index_card(name, u_data[name])
+    
     fig_u = go.Figure()
+    has_any_u = False
     for name in sel_usa:
         d = u_data[name]
-        if d: fig_u.add_trace(go.Scattergl(x=d['df'].index, y=d['df']['pct'], mode='lines', name=name))
-    fig_u.update_layout(height=280, margin=dict(l=0,r=0,t=0,b=0), plot_bgcolor='white')
-    st.plotly_chart(fig_u, use_container_width=True, config={'displayModeBar': False})
+        if d is not None and not d['df'].empty:
+            fig_u.add_trace(go.Scattergl(x=d['df'].index, y=d['df']['pct'], mode='lines', name=name))
+            has_any_u = True
+            
+    fig_u.update_layout(height=280, margin=dict(l=0,r=0,t=0,b=0), plot_bgcolor='white', hovermode='x unified')
+    if has_any_u:
+        st.plotly_chart(fig_u, use_container_width=True, config={'displayModeBar': False})
+    else:
+        st.warning("⚠️ 미국 시장 그래프 데이터를 불러오는 중입니다.")
 
 if st.session_state.banner_news and time.time() < st.session_state.banner_expiry:
     bn = st.session_state.banner_news
