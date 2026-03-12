@@ -9,7 +9,7 @@ import pandas as pd
 import plotly.graph_objects as go
 
 # ==========================================
-# 🔐 API 키 설정
+# 🔐 API 키 설정 (보안 적용: st.secrets 사용)
 # ==========================================
 NAVER_CLIENT_ID = st.secrets["NAVER_CLIENT_ID"]
 NAVER_CLIENT_SECRET = st.secrets["NAVER_CLIENT_SECRET"]
@@ -42,7 +42,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 🔊 사이렌 알람 (4초로 수정 완료)
+# 🔊 4초 사이렌 알람 (4초로 수정 완료)
 def play_alarm_4s():
     sound_js = """
         <script>
@@ -68,6 +68,7 @@ def play_alarm_4s():
     """
     st.components.v1.html(sound_js, height=0)
 
+# 세션 관리
 if "seen_links" not in st.session_state: st.session_state.seen_links = set()
 if "news_log" not in st.session_state: st.session_state.news_log = []
 if "archive_log" not in st.session_state: st.session_state.archive_log = []
@@ -76,19 +77,28 @@ if "banner_expiry" not in st.session_state: st.session_state.banner_expiry = 0
 if "is_initial_fetch" not in st.session_state: st.session_state.is_initial_fetch = True
 if "audio_authorized" not in st.session_state: st.session_state.audio_authorized = False
 
-with st.expander("🐣 처음 오셨나요? 장인어른을 위한 사용 설명서", expanded=True):
+# =========================
+# 🐣 장인어른 전용 안내 메뉴 (원래대로 유지)
+# =========================
+with st.expander("🐣 처음 오셨나요? 장인어른을 위한 사용 설명서 (클릭해보세요!)", expanded=True):
     st.markdown("""
     ### 🐥 주식 도움 병아리 사용법
-    1. **알람 활성화:** 아래에 있는 **빨간색 알람 버튼**을 꼭 눌러주세요!
-    2. **실시간 속보:** 가장 최근 뉴스가 **맨 위**에 나타납니다.
-    3. **긴급 배너:** 정말 중요한 소식은 화면 중앙에 **빨간 배너**가 뜹니다.
+    1. **알람 활성화:** 가장 먼저 아래에 있는 **빨간색 알람 버튼**을 눌러주세요. 그래야 속보가 나올 때 사이렌이 울립니다!
+    2. **실시간 속보:** 화면 가운데에 빨간 줄이 그어진 뉴스들이 가장 최신 속보입니다.
+    3. **긴급 배너:** 정말 중요한 뉴스는 화면 중간에 **번쩍이는 빨간 배너**로 나타납니다.
+    4. **보관함:** 뉴스가 50개가 넘어가면 오른쪽 **보관함**으로 차곡차곡 쌓입니다. 예전 뉴스는 거기서 보세요!
+    5. **뉴스 읽기:** 뉴스 제목을 마우스로 클릭하시면 상세 기사 창이 새로 열립니다.
     """)
 
 if not st.session_state.audio_authorized:
+    st.error("⚠️ 장인어른! 속보 사이렌을 들으시려면 아래 버튼을 꼭 한 번 눌러주세요.")
     if st.button("📢 실시간 사이렌 알람 활성화하기 (클릭!)", use_container_width=True):
         st.session_state.audio_authorized = True
         st.rerun()
 
+# =========================
+# ⚙️ 사이드바
+# =========================
 sel_kor = ["코스피", "코스닥", "200선물"]
 sel_usa = ["나스닥", "S&P 500"]
 
@@ -99,26 +109,30 @@ with st.sidebar:
     trash_in = st.text_area("제외할 키워드", "연예, 스포츠, 로또, 인사, 부고")
     targets = [x.strip() for x in target_in.split(",") if x.strip()]
     trashes = [x.strip() for x in trash_in.split(",") if x.strip()]
-    if st.button("✅ 필터 즉시 적용하기"):
+
+    if st.button("✅ 필터 즉시 적용하기", use_container_width=True):
         st.session_state.seen_links = set()
         st.session_state.news_log = []
         st.session_state.archive_log = []
         st.session_state.is_initial_fetch = True
         st.rerun()
 
+# =========================
+# 📈 데이터 처리 (코스피 복구 로직 적용)
+# =========================
 @st.cache_data(ttl=60, show_spinner=False)
 def get_intraday_data(symbol):
     try:
         ticker = yf.Ticker(symbol)
+        # 1d가 안나올 때를 대비해 5d를 가져와 마지막 날짜만 추출
         df = ticker.history(period="5d", interval="1m")
         if df.empty: return None
         last_date = df.index[-1].date()
-        day_df = df[df.index.date == last_date].copy()
-        if day_df.empty: return None
-        open_p = day_df['Close'].iloc[0]
-        curr_p = day_df['Close'].iloc[-1]
-        day_df['pct'] = ((day_df['Close'] - open_p) / open_p) * 100
-        return {"df": day_df, "price": curr_p, "pct": ((curr_p - open_p) / open_p) * 100}
+        df = df[df.index.date == last_date].copy()
+        
+        open_p, curr_p = df['Close'].iloc[0], df['Close'].iloc[-1]
+        df['pct'] = ((df['Close'] - open_p) / open_p) * 100
+        return {"df": df, "price": curr_p, "pct": ((curr_p - open_p) / open_p) * 100}
     except: return None
 
 def draw_index_card(title, data):
@@ -143,12 +157,13 @@ def fetch_news(t_list, tr_list, b_only):
                     if any(x in t for x in tr_list if x): continue
                     out.append({"title": t, "link": item['link'], "dt": parser.parse(item['pubDate']).replace(tzinfo=None)})
         except: pass
-    return sorted(out, key=lambda x: x['dt'], reverse=True)
+    return out
 
-# 🆕 뉴스 갱신 (리스트 최상단 고정 로직)
+# 뉴스 갱신 로직 (상단 고정 유지)
 raw_news = fetch_news(targets, trashes, use_bracket)
 if st.session_state.is_initial_fetch:
-    for n in raw_news:
+    initial = sorted(raw_news, key=lambda x: x['dt'], reverse=True)
+    for n in initial:
         if n['link'] not in st.session_state.seen_links:
             st.session_state.seen_links.add(n['link'])
             st.session_state.news_log.append(n)
@@ -156,16 +171,16 @@ if st.session_state.is_initial_fetch:
 else:
     new_ones = [n for n in raw_news if n['link'] not in st.session_state.seen_links]
     if new_ones:
-        # 새로 발견된 뉴스들을 시간순(오래된 것부터) 정렬하여 최신 것이 마지막에 오게 함
-        new_ones = sorted(new_ones, key=lambda x: x['dt'])
-        st.session_state.banner_news = new_ones[-1]
+        new_ones = sorted(new_ones, key=lambda x: x['dt'], reverse=True)
+        st.session_state.banner_news = new_ones[0]
         st.session_state.banner_expiry = time.time() + 20
-        if st.session_state.audio_authorized: play_alarm_4s()
+        if st.session_state.audio_authorized:
+            play_alarm_4s() # 4초로 수정
         
-        for n in new_ones:
+        for n in reversed(new_ones):
             st.session_state.seen_links.add(n['link'])
-            # news_log의 0번 인덱스에 하나씩 삽입 -> 최신 기사가 항상 맨 위!
             st.session_state.news_log.insert(0, n)
+            
             if len(st.session_state.news_log) > 50:
                 removed = st.session_state.news_log.pop()
                 st.session_state.archive_log.insert(0, removed)
@@ -184,15 +199,11 @@ with c1:
     for i, name in enumerate(sel_kor):
         with v_kor[i]: draw_index_card(name, k_data[name])
     fig_k = go.Figure()
-    has_any_k = False
     for name in sel_kor:
         d = k_data[name]
-        if d is not None:
-            fig_k.add_trace(go.Scattergl(x=d['df'].index, y=d['df']['pct'], mode='lines', name=name))
-            has_any_k = True
+        if d: fig_k.add_trace(go.Scattergl(x=d['df'].index, y=d['df']['pct'], mode='lines', name=name))
     fig_k.update_layout(height=280, margin=dict(l=0,r=0,t=0,b=0), plot_bgcolor='white')
-    if has_any_k: st.plotly_chart(fig_k, use_container_width=True, config={'displayModeBar': False})
-    else: st.warning("⚠️ 한국 데이터 대기 중...")
+    st.plotly_chart(fig_k, use_container_width=True, config={'displayModeBar': False})
 
 with c2:
     st.subheader("🇺🇸 미국 시장")
@@ -201,24 +212,21 @@ with c2:
     for i, name in enumerate(sel_usa):
         with v_usa[i]: draw_index_card(name, u_data[name])
     fig_u = go.Figure()
-    has_any_u = False
     for name in sel_usa:
         d = u_data[name]
-        if d is not None:
-            fig_u.add_trace(go.Scattergl(x=d['df'].index, y=d['df']['pct'], mode='lines', name=name))
-            has_any_u = True
+        if d: fig_u.add_trace(go.Scattergl(x=d['df'].index, y=d['df']['pct'], mode='lines', name=name))
     fig_u.update_layout(height=280, margin=dict(l=0,r=0,t=0,b=0), plot_bgcolor='white')
-    if has_any_u: st.plotly_chart(fig_u, use_container_width=True, config={'displayModeBar': False})
-    else: st.warning("⚠️ 미국 데이터 대기 중...")
+    st.plotly_chart(fig_u, use_container_width=True, config={'displayModeBar': False})
 
+# 🚨 속보 배너
 if st.session_state.banner_news and time.time() < st.session_state.banner_expiry:
     bn = st.session_state.banner_news
-    st.markdown(f'<a href="{bn["link"]}" target="_blank" class="urgent-banner"><p class="urgent-text">🐥 병아리 속보: {bn["title"]}</p></a>', unsafe_allow_html=True)
+    st.markdown(f'<a href="{bn["link"]}" target="_blank" class="urgent-banner"><p class="urgent-text">🐥 병아리 속보 알림: {bn["title"]}</p></a>', unsafe_allow_html=True)
 
+# 하단 리스트
 m1, m2 = st.columns([3, 1])
 with m1:
     st.subheader("📡 실시간 뉴스 리스트")
-    # news_log를 그대로 출력 (이미 0번 인덱스가 최신임)
     for n in st.session_state.news_log:
         st.markdown(f'<div class="news-card"><span class="news-time-tag">{n["dt"].strftime("%H:%M:%S")}</span><a href="{n["link"]}" target="_blank">{n["title"]}</a></div>', unsafe_allow_html=True)
 
