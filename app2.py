@@ -9,7 +9,7 @@ import pandas as pd
 import plotly.graph_objects as go
 
 # ==========================================
-# 🔐 API 키 설정 (보안 적용: st.secrets 사용)
+# 🔐 API 키 설정
 # ==========================================
 NAVER_CLIENT_ID = st.secrets["NAVER_CLIENT_ID"]
 NAVER_CLIENT_SECRET = st.secrets["NAVER_CLIENT_SECRET"]
@@ -42,7 +42,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 🔊 4초 사이렌 알람 (4초로 수정 완료)
+# 🔊 4초 사이렌 알람
 def play_alarm_4s():
     sound_js = """
         <script>
@@ -68,7 +68,6 @@ def play_alarm_4s():
     """
     st.components.v1.html(sound_js, height=0)
 
-# 세션 관리
 if "seen_links" not in st.session_state: st.session_state.seen_links = set()
 if "news_log" not in st.session_state: st.session_state.news_log = []
 if "archive_log" not in st.session_state: st.session_state.archive_log = []
@@ -77,28 +76,23 @@ if "banner_expiry" not in st.session_state: st.session_state.banner_expiry = 0
 if "is_initial_fetch" not in st.session_state: st.session_state.is_initial_fetch = True
 if "audio_authorized" not in st.session_state: st.session_state.audio_authorized = False
 
-# =========================
-# 🐣 장인어른 전용 안내 메뉴 (원래대로 유지)
-# =========================
+# 설명서 유지
 with st.expander("🐣 처음 오셨나요? 장인어른을 위한 사용 설명서 (클릭해보세요!)", expanded=True):
     st.markdown("""
     ### 🐥 주식 도움 병아리 사용법
-    1. **알람 활성화:** 가장 먼저 아래에 있는 **빨간색 알람 버튼**을 눌러주세요. 그래야 속보가 나올 때 사이렌이 울립니다!
-    2. **실시간 속보:** 화면 가운데에 빨간 줄이 그어진 뉴스들이 가장 최신 속보입니다.
+    1. **알람 활성화:** 가장 먼저 아래에 있는 **빨간색 알람 버튼**을 눌러주세요.
+    2. **실시간 속보:** 가장 최근 뉴스가 화면 **맨 위**에 나타납니다.
     3. **긴급 배너:** 정말 중요한 뉴스는 화면 중간에 **번쩍이는 빨간 배너**로 나타납니다.
-    4. **보관함:** 뉴스가 50개가 넘어가면 오른쪽 **보관함**으로 차곡차곡 쌓입니다. 예전 뉴스는 거기서 보세요!
+    4. **보관함:** 뉴스가 50개가 넘어가면 오른쪽 **보관함**으로 차곡차곡 쌓입니다.
     5. **뉴스 읽기:** 뉴스 제목을 마우스로 클릭하시면 상세 기사 창이 새로 열립니다.
     """)
 
 if not st.session_state.audio_authorized:
-    st.error("⚠️ 장인어른! 속보 사이렌을 들으시려면 아래 버튼을 꼭 한 번 눌러주세요.")
     if st.button("📢 실시간 사이렌 알람 활성화하기 (클릭!)", use_container_width=True):
         st.session_state.audio_authorized = True
         st.rerun()
 
-# =========================
-# ⚙️ 사이드바
-# =========================
+# 사이드바 유지
 sel_kor = ["코스피", "코스닥", "200선물"]
 sel_usa = ["나스닥", "S&P 500"]
 
@@ -109,30 +103,29 @@ with st.sidebar:
     trash_in = st.text_area("제외할 키워드", "연예, 스포츠, 로또, 인사, 부고")
     targets = [x.strip() for x in target_in.split(",") if x.strip()]
     trashes = [x.strip() for x in trash_in.split(",") if x.strip()]
-
-    if st.button("✅ 필터 즉시 적용하기", use_container_width=True):
+    if st.button("✅ 필터 즉시 적용하기"):
         st.session_state.seen_links = set()
         st.session_state.news_log = []
         st.session_state.archive_log = []
         st.session_state.is_initial_fetch = True
         st.rerun()
 
-# =========================
-# 📈 데이터 처리 (코스피 복구 로직 적용)
-# =========================
+# 📈 코스피 복구 로직 (성공했던 버전)
 @st.cache_data(ttl=60, show_spinner=False)
 def get_intraday_data(symbol):
     try:
         ticker = yf.Ticker(symbol)
-        # 1d가 안나올 때를 대비해 5d를 가져와 마지막 날짜만 추출
         df = ticker.history(period="5d", interval="1m")
         if df.empty: return None
+        # 데이터가 있는 가장 최근 날짜만 추출
         last_date = df.index[-1].date()
-        df = df[df.index.date == last_date].copy()
+        day_df = df[df.index.date == last_date].copy()
+        if day_df.empty: return None
         
-        open_p, curr_p = df['Close'].iloc[0], df['Close'].iloc[-1]
-        df['pct'] = ((df['Close'] - open_p) / open_p) * 100
-        return {"df": df, "price": curr_p, "pct": ((curr_p - open_p) / open_p) * 100}
+        open_p = day_df['Close'].iloc[0]
+        curr_p = day_df['Close'].iloc[-1]
+        day_df['pct'] = ((day_df['Close'] - open_p) / open_p) * 100
+        return {"df": day_df, "price": curr_p, "pct": ((curr_p - open_p) / open_p) * 100}
     except: return None
 
 def draw_index_card(title, data):
@@ -159,7 +152,7 @@ def fetch_news(t_list, tr_list, b_only):
         except: pass
     return out
 
-# 뉴스 갱신 로직 (상단 고정 유지)
+# 뉴스 갱신 (상단 고정)
 raw_news = fetch_news(targets, trashes, use_bracket)
 if st.session_state.is_initial_fetch:
     initial = sorted(raw_news, key=lambda x: x['dt'], reverse=True)
@@ -174,20 +167,15 @@ else:
         new_ones = sorted(new_ones, key=lambda x: x['dt'], reverse=True)
         st.session_state.banner_news = new_ones[0]
         st.session_state.banner_expiry = time.time() + 20
-        if st.session_state.audio_authorized:
-            play_alarm_4s() # 4초로 수정
-        
+        if st.session_state.audio_authorized: play_alarm_4s()
         for n in reversed(new_ones):
             st.session_state.seen_links.add(n['link'])
             st.session_state.news_log.insert(0, n)
-            
             if len(st.session_state.news_log) > 50:
                 removed = st.session_state.news_log.pop()
                 st.session_state.archive_log.insert(0, removed)
 
-# =========================
-# 메인 레이아웃
-# =========================
+# 레이아웃
 st.title("🐥 장인어른 주식 도움 병아리")
 st.write(f"⏰ 마지막 확인: {datetime.now().strftime('%H:%M:%S')}")
 
@@ -218,12 +206,10 @@ with c2:
     fig_u.update_layout(height=280, margin=dict(l=0,r=0,t=0,b=0), plot_bgcolor='white')
     st.plotly_chart(fig_u, use_container_width=True, config={'displayModeBar': False})
 
-# 🚨 속보 배너
 if st.session_state.banner_news and time.time() < st.session_state.banner_expiry:
     bn = st.session_state.banner_news
-    st.markdown(f'<a href="{bn["link"]}" target="_blank" class="urgent-banner"><p class="urgent-text">🐥 병아리 속보 알림: {bn["title"]}</p></a>', unsafe_allow_html=True)
+    st.markdown(f'<a href="{bn["link"]}" target="_blank" class="urgent-banner"><p class="urgent-text">🐥 병아리 속보: {bn["title"]}</p></a>', unsafe_allow_html=True)
 
-# 하단 리스트
 m1, m2 = st.columns([3, 1])
 with m1:
     st.subheader("📡 실시간 뉴스 리스트")
