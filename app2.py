@@ -9,20 +9,31 @@ import pandas as pd
 import plotly.graph_objects as go
 
 # ==========================================
-# 🔐 API 키 설정 (보안 강화: Secrets 활용)
+# 🔐 보안 및 API 키 설정 (Secrets 활용)
 # ==========================================
-# 중요: GitHub에 키를 절대 적지 마세요.
-# 배포 시 Streamlit Cloud의 Settings > Secrets에 아래 정보를 입력해야 합니다.
 NAVER_CLIENT_ID = st.secrets.get("NAVER_CLIENT_ID", "")
 NAVER_CLIENT_SECRET = st.secrets.get("NAVER_CLIENT_SECRET", "")
 
-# API 키 누락 시 안내 문구
 if not NAVER_CLIENT_ID or not NAVER_CLIENT_SECRET:
     st.warning("⚠️ 네이버 API 키가 설정되지 않았습니다. 배포 환경의 Secrets 설정을 확인해주세요.")
     st.stop()
 
 # =========================
-# 페이지 설정 및 UI 디자인 (기능 유지)
+# 👴 장인어른을 위한 쉬운 설명창
+# =========================
+def show_elderly_guide():
+    with st.expander("👴 처음 오셨나요? 이용 방법 읽어보기 (클릭)", expanded=False):
+        st.markdown("""
+        1. **실시간 차트**: 왼쪽은 한국 지수, 오른쪽은 미국 지수입니다. 
+           - 선이 삐죽삐죽 움직이는 건 시장의 '기분'을 나타냅니다.
+           - 지금 장이 안 열렸어도 **가장 최근에 끝난 시장 정보**를 가져오니 안심하고 보세요.
+        2. **빨간 배너**: 아주 중요한 뉴스가 새로 나오면 맨 위에 빨간색으로 깜빡이며 나타납니다.
+        3. **소리 알림**: 새 뉴스가 오면 '삐- 삐-' 소리로 알려드리니 화면을 계속 안 보셔도 됩니다.
+        4. **보관함**: 너무 빨리 지나간 뉴스는 오른쪽 '보관함'에서 다시 볼 수 있습니다.
+        """)
+
+# =========================
+# 페이지 설정 및 UI
 # =========================
 st.set_page_config(layout="wide", page_title="🚨 실시간 종목 터미널", page_icon="📈")
 
@@ -45,7 +56,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 🔊 알람 기능 (기능 유지)
+# 🔊 알림 기능
 def play_notification_sound_3_times():
     audio_url = "https://actions.google.com/sounds/v1/alarms/beep_short.ogg"
     sound_js = f"""
@@ -55,7 +66,7 @@ def play_notification_sound_3_times():
             var count = 0;
             function play() {{
                 if (count < 3) {{
-                    audio.play().catch(e => console.log('Audio play failed: user interaction required.'));
+                    audio.play().catch(e => console.log('Audio error'));
                     count++;
                     setTimeout(play, 700);
                 }}
@@ -75,37 +86,60 @@ if "banner_expiry" not in st.session_state: st.session_state.banner_expiry = 0
 if "is_initial_fetch" not in st.session_state: st.session_state.is_initial_fetch = True
 
 # =========================
-# 데이터 수집 및 차트 (기능 유지)
+# 📈 데이터 수집 (지그재그 & 직전 장 정보 반영)
 # =========================
+@st.cache_data(ttl=60) # 1분간 데이터 유지 (서버 부하 방지)
 def get_intraday_data(symbol):
     try:
         ticker = yf.Ticker(symbol)
-        df = ticker.history(period="1d", interval="5m")
-        if df.empty:
-            if symbol == "KM=F":
-                df = yf.Ticker("^KS200").history(period="1d", interval="5m")
-            if df.empty: return None
+        # '5d'를 가져와서 주말이나 장 마감 후에도 가장 최근 영업일 데이터를 찾음
+        df = ticker.history(period="5d", interval="1m") 
+        
+        if df.empty: return None
+
+        # 가장 마지막 데이터가 있는 날짜(최근 영업일)를 찾아 그날 데이터만 추출
+        latest_date = df.index[-1].date()
+        df = df[df.index.date == latest_date]
+        
+        if df.empty: return None
+
+        # 해당 날짜의 첫 번째 가격 기준으로 변동률 계산
         open_price = df['Close'].iloc[0]
         df['pct'] = ((df['Close'] - open_price) / open_price) * 100
         return df
-    except: return None
+    except:
+        return None
 
 def create_combined_chart(indices_dict, title_text):
     fig = go.Figure()
     colors = ['#EF5350', '#FFA726', '#26A69A', '#42A5F5', '#7E57C2']
+    
     for i, (name, sym) in enumerate(indices_dict.items()):
         df = get_intraday_data(sym)
         if df is not None:
-            fig.add_trace(go.Scatter(x=df.index, y=df['pct'], mode='lines', name=name, line=dict(color=colors[i % len(colors)], width=2.5)))
-    fig.update_layout(title=dict(text=title_text, font=dict(size=16)), hovermode="x unified", height=380, margin=dict(l=10, r=10, t=50, b=30), plot_bgcolor='white',
-                      xaxis=dict(showgrid=True, gridcolor='#f0f0f0', tickformat="%H:%M"),
-                      yaxis=dict(showgrid=True, gridcolor='#f0f0f0', zeroline=True, zerolinecolor='black', side='right'),
-                      legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0))
+            # 1분 단위로 촘촘하게 선을 그림 (지그재그 효과)
+            fig.add_trace(go.Scatter(
+                x=df.index, y=df['pct'], 
+                mode='lines', name=name, 
+                line=dict(color=colors[i % len(colors)], width=1.8)
+            ))
+    
+    fig.update_layout(
+        title=dict(text=title_text, font=dict(size=16)),
+        hovermode="x unified", height=380, margin=dict(l=10, r=10, t=50, b=30),
+        plot_bgcolor='white',
+        xaxis=dict(showgrid=True, gridcolor='#f0f0f0', tickformat="%H:%M"),
+        yaxis=dict(showgrid=True, gridcolor='#f0f0f0', zeroline=True, zerolinecolor='black', side='right'),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0)
+    )
     return fig
 
 # =========================
-# 메인 레이아웃 및 뉴스 로직
+# 메인 화면 구성
 # =========================
+st.title("📈 실시간 종목 터미널")
+show_elderly_guide() # 가이드 표시
+
 with st.sidebar:
     st.header("⚙️ 수집 필터")
     use_bracket_filter = st.checkbox("괄호([ ]) 내 키워드만 필터링", value=True)
@@ -119,12 +153,16 @@ with st.sidebar:
 
 c1, c2 = st.columns(2)
 with c1:
-    with st.expander("📊 국내 지수 (코스피 / 코스닥 / 200선물)", expanded=True):
-        st.plotly_chart(create_combined_chart({"KOSPI": "^KS11", "KOSDAQ": "^KQ11", "K200 선물": "KM=F"}, "국내 시장 흐름"), use_container_width=True)
+    with st.expander("📊 국내 시장 (KOSPI / KOSDAQ)", expanded=True):
+        # 국내 시장 데이터 표시
+        st.plotly_chart(create_combined_chart({"KOSPI": "^KS11", "KOSDAQ": "^KQ11"}, "국내 시장 흐름"), use_container_width=True)
 with c2:
-    with st.expander("🌎 해외 지수 (NASDAQ / S&P500)", expanded=True):
-        st.plotly_chart(create_combined_chart({"NASDAQ": "^IXIC", "S&P 500": "^GSPC"}, "해외 시장 흐름"), use_container_width=True)
+    with st.expander("🌎 해외 시장 (NASDAQ / S&P500)", expanded=True):
+        # 나스닥과 S&P500 (거래가 활발한 ETF인 QQQ, SPY로 대체하여 정확도 향상)
+        st.plotly_chart(create_combined_chart({"NASDAQ": "QQQ", "S&P 500": "SPY"}, "해외 시장 흐름"), use_container_width=True)
 
+# 뉴스 수집 로직 (기존 유지)
+@st.cache_data(ttl=30)
 def fetch_news(target_list, trash_list, bracket_only):
     new_found = []
     headers = {"X-Naver-Client-Id": NAVER_CLIENT_ID, "X-Naver-Client-Secret": NAVER_CLIENT_SECRET}
@@ -141,9 +179,9 @@ def fetch_news(target_list, trash_list, bracket_only):
         except: continue
     return new_found
 
-# 뉴스 업데이트 로직
 raw_news = fetch_news(targets, trash_list, use_bracket_filter)
 
+# 뉴스 업데이트 핸들링 (기존 로직 유지)
 if st.session_state.is_initial_fetch:
     st.session_state.news_log = sorted(raw_news, key=lambda x: x['dt'], reverse=True)[:50]
     for n in st.session_state.news_log: st.session_state.seen_links.add(n['link'])
@@ -163,6 +201,7 @@ else:
                 if not any(a['link'] == pushed_out['link'] for a in st.session_state.archive_log):
                     st.session_state.archive_log.insert(0, pushed_out)
 
+# 상단 알림 배너
 if st.session_state.banner_news and time.time() < st.session_state.banner_expiry:
     bn = st.session_state.banner_news
     st.markdown(f'<a href="{bn["link"]}" target="_blank" class="urgent-banner"><p class="urgent-text">🚨 신규 속보: {bn["title"]}</p></a>', unsafe_allow_html=True)
@@ -179,6 +218,6 @@ with m2:
         st.markdown(f'<div class="archive-item"><a href="{a["link"]}" target="_blank">[{a["dt"].strftime("%H:%M")}] {a["title"][:22]}...</a></div>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-# 30초 대기 후 새로고침
+# 30초 후 자동 새로고침
 time.sleep(30)
 st.rerun()
