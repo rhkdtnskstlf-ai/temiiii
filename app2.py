@@ -9,9 +9,8 @@ import pandas as pd
 import plotly.graph_objects as go
 
 # ==========================================
-# 🔐 API 키 설정 (보안 적용: st.secrets 사용)
+# 🔐 API 키 설정 (보안 적용)
 # ==========================================
-# 배포 시 Streamlit Cloud의 Secrets 설정에 아래 키 이름을 등록하세요.
 NAVER_CLIENT_ID = st.secrets["NAVER_CLIENT_ID"]
 NAVER_CLIENT_SECRET = st.secrets["NAVER_CLIENT_SECRET"]
 
@@ -36,7 +35,6 @@ st.markdown("""
     .archive-box { background-color: #ffffff; padding: 15px; border-radius: 10px; height: 600px; overflow-y: auto; border: 1px solid #ddd; }
     .archive-item { font-size: 13px; padding: 8px 0; border-bottom: 1px solid #eee; }
     
-    /* 흔적 제거용 */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
@@ -44,7 +42,6 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 🔊 7초 강력 사이렌 알람
 def play_alarm_7s():
     sound_js = """
         <script>
@@ -70,7 +67,6 @@ def play_alarm_7s():
     """
     st.components.v1.html(sound_js, height=0)
 
-# 세션 관리
 if "seen_links" not in st.session_state: st.session_state.seen_links = set()
 if "news_log" not in st.session_state: st.session_state.news_log = []
 if "archive_log" not in st.session_state: st.session_state.archive_log = []
@@ -79,9 +75,6 @@ if "banner_expiry" not in st.session_state: st.session_state.banner_expiry = 0
 if "is_initial_fetch" not in st.session_state: st.session_state.is_initial_fetch = True
 if "audio_authorized" not in st.session_state: st.session_state.audio_authorized = False
 
-# =========================
-# 🐣 장인어른 전용 안내 메뉴
-# =========================
 with st.expander("🐣 처음 오셨나요? 장인어른을 위한 사용 설명서 (클릭해보세요!)", expanded=True):
     st.markdown("""
     ### 🐥 주식 도움 병아리 사용법
@@ -98,9 +91,6 @@ if not st.session_state.audio_authorized:
         st.session_state.audio_authorized = True
         st.rerun()
 
-# =========================
-# ⚙️ 사이드바
-# =========================
 sel_kor = ["코스피", "코스닥", "200선물"]
 sel_usa = ["나스닥", "S&P 500"]
 
@@ -111,7 +101,6 @@ with st.sidebar:
     trash_in = st.text_area("제외할 키워드", "연예, 스포츠, 로또, 인사, 부고")
     targets = [x.strip() for x in target_in.split(",") if x.strip()]
     trashes = [x.strip() for x in trash_in.split(",") if x.strip()]
-
     if st.button("✅ 필터 즉시 적용하기", use_container_width=True):
         st.session_state.seen_links = set()
         st.session_state.news_log = []
@@ -120,15 +109,21 @@ with st.sidebar:
         st.rerun()
 
 # =========================
-# 📈 데이터 처리
+# 📈 데이터 처리 (복구 포인트!)
 # =========================
 @st.cache_data(ttl=60, show_spinner=False)
 def get_intraday_data(symbol):
     try:
         ticker = yf.Ticker(symbol)
-        df = ticker.history(period="2d", interval="1m")
+        df = ticker.history(period="1d", interval="1m") # '1d'로 변경하여 데이터 유실 방지
+        if df.empty:
+            df = ticker.history(period="2d", interval="1m") # 1일치 없으면 2일치 시도
         if df.empty: return None
-        df = df[df.index.date == df.index[-1].date()]
+        
+        # 마지막 날짜 데이터만 추출
+        last_date = df.index[-1].date()
+        df = df[df.index.date == last_date]
+        
         open_p, curr_p = df['Close'].iloc[0], df['Close'].iloc[-1]
         df['pct'] = ((df['Close'] - open_p) / open_p) * 100
         return {"df": df, "price": curr_p, "pct": ((curr_p - open_p) / open_p) * 100}
@@ -158,7 +153,6 @@ def fetch_news(t_list, tr_list, b_only):
         except: pass
     return out
 
-# 뉴스 갱신 로직
 raw_news = fetch_news(targets, trashes, use_bracket)
 if st.session_state.is_initial_fetch:
     initial = sorted(raw_news, key=lambda x: x['dt'], reverse=True)
@@ -173,13 +167,10 @@ else:
         new_ones = sorted(new_ones, key=lambda x: x['dt'], reverse=True)
         st.session_state.banner_news = new_ones[0]
         st.session_state.banner_expiry = time.time() + 20
-        if st.session_state.audio_authorized:
-            play_alarm_7s()
-        
+        if st.session_state.audio_authorized: play_alarm_7s()
         for n in reversed(new_ones):
             st.session_state.seen_links.add(n['link'])
             st.session_state.news_log.insert(0, n)
-            
             if len(st.session_state.news_log) > 50:
                 removed = st.session_state.news_log.pop()
                 st.session_state.archive_log.append(removed)
@@ -217,24 +208,18 @@ with c2:
     fig_u.update_layout(height=280, margin=dict(l=0,r=0,t=0,b=0), plot_bgcolor='white')
     st.plotly_chart(fig_u, use_container_width=True, config={'displayModeBar': False})
 
-# 🚨 속보 배너
 if st.session_state.banner_news and time.time() < st.session_state.banner_expiry:
     bn = st.session_state.banner_news
     st.markdown(f'<a href="{bn["link"]}" target="_blank" class="urgent-banner"><p class="urgent-text">🐥 병아리 속보 알림: {bn["title"]}</p></a>', unsafe_allow_html=True)
 
-# 하단 리스트
 m1, m2 = st.columns([3, 1])
 with m1:
     st.subheader("📡 실시간 뉴스 리스트")
     for n in st.session_state.news_log:
         st.markdown(f'<div class="news-card"><span class="news-time-tag">{n["dt"].strftime("%H:%M:%S")}</span><a href="{n["link"]}" target="_blank">{n["title"]}</a></div>', unsafe_allow_html=True)
-
 with m2:
     st.subheader("📁 지나간 뉴스 보관함")
-    archive_content = ""
-    for a in st.session_state.archive_log:
-        archive_content += f'<div class="archive-item"><a href="{a["link"]}" target="_blank">[{a["dt"].strftime("%H:%M")}] {a["title"][:20]}...</a></div>'
-    
+    archive_content = "".join([f'<div class="archive-item"><a href="{a["link"]}" target="_blank">[{a["dt"].strftime("%H:%M")}] {a["title"][:20]}...</a></div>' for a in st.session_state.archive_log])
     st.markdown(f'<div class="archive-box">{archive_content}</div>', unsafe_allow_html=True)
 
 time.sleep(60)
