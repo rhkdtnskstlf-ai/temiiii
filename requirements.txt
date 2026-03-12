@@ -2,4 +2,5 @@ streamlit
 requests
 yfinance
 pandas
+plotly
 python-dateutil
